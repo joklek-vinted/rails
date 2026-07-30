@@ -14,7 +14,9 @@ module ActiveRecord
       # Instantiates a new column in the table.
       #
       # +name+ is the column's name, such as <tt>supplier_id</tt> in <tt>supplier_id bigint</tt>.
-      # +default+ is the type-casted default value, such as +new+ in <tt>sales_stage varchar(20) default 'new'</tt>.
+      # +default+ is the default value as the database reported it, such as
+      # <tt>"new"</tt> in <tt>sales_stage varchar(20) default 'new'</tt>. It is kept as is in
+      # #default_before_type_cast, and exposed deserialized by #default.
       # +sql_type_metadata+ is various information about the type of the column
       # +null+ determines if this column allows +NULL+ values.
       def initialize(name, cast_type, default, sql_type_metadata = nil, null = true, default_function = nil, collation: nil, comment: nil, **)
@@ -22,6 +24,7 @@ module ActiveRecord
         @cast_type = cast_type
         @sql_type_metadata = sql_type_metadata
         @null = null
+        @default_before_type_cast = default
         @default = default.nil? || cast_type.mutable? ? default : cast_type.deserialize(default)
         @default_function = default_function
         @collation = collation
@@ -30,6 +33,15 @@ module ActiveRecord
 
       def has_default?
         !default.nil? || default_function
+      end
+
+      # The default exactly as the database reported it. Callers that deserialize
+      # the default themselves, in particular with another type, must use this
+      # rather than #default, which may already be deserialized.
+      def default_before_type_cast
+        # Columns restored from a schema cache dumped before this attribute
+        # existed only have the (possibly deserialized) default.
+        @default_before_type_cast.nil? ? @default : @default_before_type_cast
       end
 
       def bigint?
@@ -50,6 +62,7 @@ module ActiveRecord
         @sql_type_metadata = coder["sql_type_metadata"]
         @null = coder["null"]
         @default = coder["default"]
+        @default_before_type_cast = coder["default_before_type_cast"]
         @default_function = coder["default_function"]
         @collation = coder["collation"]
         @comment = coder["comment"]
@@ -61,6 +74,7 @@ module ActiveRecord
         coder["sql_type_metadata"] = @sql_type_metadata
         coder["null"] = @null
         coder["default"] = @default
+        coder["default_before_type_cast"] = default_before_type_cast unless default_before_type_cast.equal?(@default)
         coder["default_function"] = @default_function
         coder["collation"] = @collation
         coder["comment"] = @comment
@@ -121,6 +135,9 @@ module ActiveRecord
           @name = -name
           @sql_type_metadata = sql_type_metadata.deduplicate if sql_type_metadata
           @default = -default if String === default
+          # Interning keeps both identical when the default was not deserialized,
+          # which #encode_with relies on.
+          @default_before_type_cast = -@default_before_type_cast if String === @default_before_type_cast
           @default_function = -default_function if default_function
           @collation = -collation if collation
           @comment = -comment if comment

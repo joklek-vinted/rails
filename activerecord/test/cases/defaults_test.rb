@@ -58,6 +58,133 @@ class DefaultNumbersTest < ActiveRecord::TestCase
   end
 end
 
+class DefaultsWithOverriddenTypeTest < ActiveRecord::TestCase
+  # A custom type expects to deserialize the value as the database reported it.
+  class InspectingType < ActiveModel::Type::Value
+    def deserialize(value)
+      value.class.name
+    end
+  end
+
+  class Overridden < ActiveRecord::Base
+    self.table_name = "defaults_with_overridden_type"
+
+    attribute :integer_col, :string
+    attribute :date_col, :datetime
+    attribute :boolean_col, :integer
+    attribute :decimal_col, InspectingType.new
+  end
+
+  class OverriddenWithDefault < ActiveRecord::Base
+    self.table_name = "defaults_with_overridden_type"
+
+    attribute :boolean_col, :integer, default: 3
+  end
+
+  class WithEnum < ActiveRecord::Base
+    self.table_name = "defaults_with_overridden_type"
+
+    enum :integer_col, { seven: 7, eight: 8 }
+  end
+
+  class NotOverridden < ActiveRecord::Base
+    self.table_name = "defaults_with_overridden_type"
+  end
+
+  MODELS = [Overridden, OverriddenWithDefault, WithEnum, NotOverridden].freeze
+
+  setup do
+    @connection = ActiveRecord::Base.lease_connection
+    @connection.create_table :defaults_with_overridden_type, force: true do |t|
+      t.integer :integer_col, default: 7
+      t.date :date_col, default: "2020-01-02"
+      t.boolean :boolean_col, default: true
+      t.decimal :decimal_col, default: "1.5", precision: 5, scale: 2
+    end
+    MODELS.each(&:reset_column_information)
+  end
+
+  teardown do
+    @connection.drop_table :defaults_with_overridden_type, if_exists: true
+  end
+
+  def test_default_is_deserialized_by_the_overriding_type
+    record = Overridden.new
+
+    assert_equal "7", record.integer_col
+    assert_kind_of Time, record.date_col
+    assert_equal [2020, 1, 2], [record.date_col.year, record.date_col.month, record.date_col.day]
+    # Whichever integer the raw default deserializes to, deserializing an
+    # already deserialized `true` would raise.
+    assert_kind_of Integer, record.boolean_col
+    assert_equal "String", record.decimal_col
+  end
+
+  def test_overriding_type_receives_the_default_before_type_cast
+    assert_equal "7", Overridden.new.integer_col_before_type_cast
+  end
+
+  def test_default_is_not_deserialized_twice_when_the_type_is_not_overridden
+    record = NotOverridden.new
+
+    assert_equal 7, record.integer_col
+    assert_equal 7, record.integer_col_before_type_cast
+    assert_equal Date.new(2020, 1, 2), record.date_col
+    assert_equal BigDecimal("1.5"), record.decimal_col
+    assert_equal BigDecimal("1.5"), record.decimal_col_before_type_cast
+  end
+
+  def test_record_with_an_overridden_type_can_be_saved
+    # Partial inserts compare an assigned attribute to the default it overrides.
+    old_partial_inserts = Overridden.partial_inserts?
+    Overridden.partial_inserts = true
+
+    record = Overridden.create!(boolean_col: 2)
+    assert_equal 2, record.reload.boolean_col
+  ensure
+    Overridden.partial_inserts = old_partial_inserts
+  end
+
+  def test_overridden_type_with_a_user_provided_default
+    assert_equal 3, OverriddenWithDefault.new.boolean_col
+    assert_equal 3, OverriddenWithDefault.create!.reload.boolean_col
+  end
+
+  def test_enum_on_a_column_with_a_default
+    assert_equal "seven", WithEnum.new.integer_col
+    assert_equal "seven", WithEnum.create!.reload.integer_col
+  end
+
+  def test_column_keeps_the_default_before_type_cast
+    column = NotOverridden.columns_hash["integer_col"]
+
+    assert_equal 7, column.default
+    assert_equal "7", column.default_before_type_cast
+  end
+
+  def test_column_default_before_type_cast_survives_serialization
+    column = YAML.unsafe_load(YAML.dump(NotOverridden.columns_hash["integer_col"]))
+
+    assert_equal 7, column.default
+    assert_equal "7", column.default_before_type_cast
+  end
+
+  def test_column_falls_back_on_the_default_of_an_older_schema_cache
+    column = ActiveRecord::ConnectionAdapters::Column.allocate
+    column.init_with("name" => "integer_col", "cast_type" => ActiveRecord::Type::Integer.new, "default" => 7)
+
+    assert_equal 7, column.default_before_type_cast
+  end
+
+  def test_column_falls_back_on_the_default_of_an_older_marshal_schema_cache
+    column = NotOverridden.columns_hash["integer_col"].dup
+    column.remove_instance_variable(:@default_before_type_cast)
+    column = Marshal.load(Marshal.dump(column))
+
+    assert_equal 7, column.default_before_type_cast
+  end
+end
+
 class DefaultStringsTest < ActiveRecord::TestCase
   class DefaultString < ActiveRecord::Base; end
 

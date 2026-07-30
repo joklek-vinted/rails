@@ -9,6 +9,11 @@ module ActiveModel
         FromDatabase.new(name, value_before_type_cast, type, nil, value)
       end
 
+      # See FromDatabaseDefault.
+      def from_database_default(name, value_before_type_cast, type, raw_default)
+        FromDatabaseDefault.new(name, value_before_type_cast, type, raw_default)
+      end
+
       def from_user(name, value_before_type_cast, type, original_attribute = nil)
         FromUser.new(name, value_before_type_cast, type, original_attribute)
       end
@@ -202,6 +207,42 @@ module ActiveModel
           end
       end
 
+      # An attribute initialized from a schema default rather than from a row.
+      #
+      # Its +value_before_type_cast+ is the default already deserialized by the
+      # column's own type, so that it is consistent with what the database
+      # driver reports for a persisted row. That is only meaningful for that
+      # type though, so +raw_default+ retains the default as the schema reported
+      # it, and #with_type deserializes it again rather than deserializing an
+      # already deserialized value.
+      class FromDatabaseDefault < FromDatabase # :nodoc:
+        def initialize(name, value_before_type_cast, type, raw_default)
+          super(name, value_before_type_cast, type)
+          @raw_default = raw_default
+        end
+
+        def with_type(type)
+          if type.equal?(self.type)
+            self
+          else
+            Attribute.from_database(name, raw_default, type)
+          end
+        end
+
+        def init_with(coder)
+          super
+          @raw_default = coder["raw_default"]
+        end
+
+        def encode_with(coder)
+          super
+          coder["raw_default"] = raw_default unless raw_default.nil?
+        end
+
+        private
+          attr_reader :raw_default
+      end
+
       class FromUser < Attribute # :nodoc:
         def type_cast(value)
           type.cast(value)
@@ -280,6 +321,6 @@ module ActiveModel
         end
       end
 
-      private_constant :FromDatabase, :FromUser, :Null, :Uninitialized, :WithCastValue
+      private_constant :FromDatabase, :FromDatabaseDefault, :FromUser, :Null, :Uninitialized, :WithCastValue
   end
 end

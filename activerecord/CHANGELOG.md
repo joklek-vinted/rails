@@ -1,4 +1,28 @@
-*   Deprecate the `pk`, `id_value`, and `sequence_name` positional arguments to
+*   Fix `attribute` type overrides not being applied to a column's schema default.
+
+    Since Rails 8.1, `ActiveRecord::ConnectionAdapters::Column#default` holds the
+    schema default already deserialized by the column's own type, and that value
+    was passed to the default attribute as its value before type cast. A model
+    overriding the column's type kept that slot and swapped the type, so the
+    overriding type deserialized a value another type had already deserialized:
+
+    ```ruby
+    # A tinyint(1) column with `DEFAULT '1'`, mapped to :boolean.
+    class Post < ActiveRecord::Base
+      attribute :status, :integer
+    end
+
+    Post.new.status # => NoMethodError: undefined method 'to_i' for true
+    ```
+
+    Columns now also keep the default as the database reported it, in
+    `Column#default_before_type_cast`, and an overriding type (including the one
+    `enum` installs) deserializes that value instead. Defaults of columns whose
+    type is not overridden are unaffected.
+
+    *Jokūbas Lekevičius*
+
+* Deprecate the `pk`, `id_value`, and `sequence_name` positional arguments to
     `ActiveRecord::ConnectionAdapters::DatabaseStatements#insert`.
 
     * `pk` — pass `returning:` instead. `insert(arel, name, "id")` becomes

@@ -328,5 +328,36 @@ module ActiveModel
 
       assert_equal 1, attribute.with_type(Type::Integer.new).value
     end
+
+    test "from_database_default reports the deserialized default before type cast" do
+      attribute = Attribute.from_database_default(:foo, 1, Type::Integer.new, "1")
+
+      assert_equal 1, attribute.value_before_type_cast
+      assert_equal 1, attribute.value
+      assert_equal 1, attribute.original_value
+    end
+
+    test "from_database_default + with_type deserializes the raw default with the new type" do
+      attribute = Attribute.from_database_default(:foo, 1, Type::Integer.new, "1")
+      attribute = attribute.with_type(@type)
+
+      assert_equal "1", attribute.value_before_type_cast
+      assert_equal "deserialize(1)", attribute.value
+      assert_equal "deserialize(1)", attribute.original_value
+    end
+
+    test "from_database_default + with_type with the same type is a no-op" do
+      type = Type::Integer.new
+      attribute = Attribute.from_database_default(:foo, 1, type, "1")
+
+      assert_same attribute, attribute.with_type(type)
+    end
+
+    test "from_database_default keeps the raw default through serialization" do
+      attribute = Attribute.from_database_default(:foo, 1, Type::Integer.new, "1")
+      attribute = YAML.unsafe_load(YAML.dump(attribute))
+
+      assert_equal "deserialize(1)", attribute.with_type(@type).value
+    end
   end
 end
